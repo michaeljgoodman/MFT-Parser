@@ -230,10 +230,10 @@ int main() {
 
     
 
-    MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFirstFile + (int)&fileRecord->attributesOffset);
+    MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFirstFile + fileRecord->attributesOffset);
     NonResidentAttributeHeader *dataAttribute = nullptr;
 
-    //uint16_t test = fileRecord->attributesOffset;
+    //uint16_t notcalledtest = fileRecord->attributesOffset;
 
     //printf("[-] attributes offset value is: %d\n", test);
     //printf("Do we get to here?");
