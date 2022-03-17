@@ -234,11 +234,12 @@ int main() {
     NonResidentAttributeHeader *dataAttribute = nullptr;
 
     //uint16_t notcalledtest = fileRecord->attributesOffset;
-
-    //printf("[-] attributes offset value is: %d\n", test);
+    
+    //printf("[-] attributes offset value is: %d\n", notcalledtest);
     //printf("Do we get to here?");
     //we can assume non resident is true because the entire MFT cannot fit inside a single MFT record
     //but if we didn't want to assume that, we could check that mftFirstFile->nonResidentFlag was 1
+    
     while (true) {
         printf("[-] Current attribute type is: %i\n", attribute->attributeType);
         if ((int)&attribute->attributeType == 0x80) { //0x80 is $DATA
