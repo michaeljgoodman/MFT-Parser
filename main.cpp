@@ -221,11 +221,11 @@ int main() {
 
     printf("[-] Grabbing first attribute at offset of %i\n", mftFirstFile->attributesOffset);
     
-    MFTEntry *fileRecord = mftFirstFile;
+    
 
     
 
-    MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFirstFile + fileRecord->attributesOffset);
+    MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFirstFile + mftFirstFile->attributesOffset);
 
     printf("%d", attribute->nameOffset);
 
@@ -234,9 +234,7 @@ int main() {
     HANDLE first_attribute_cache = CreateFileA(".\\attribute.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
     WriteFile(first_attribute_cache, attributeBuffer, sizeof(MFTAttributeHeader), 0, 0);
 
-
-    uint32_t attributeSize = attribute->size;
-    printf("[-] Reading attribute size as: %s\n", fileRecord + attribute->size);
+    printf("[-] Reading attribute size as: %s\n", mftFirstFile + attribute->size);
 
     NonResidentAttributeHeader *dataAttribute = nullptr;
 
