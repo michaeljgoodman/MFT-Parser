@@ -70,7 +70,7 @@ int mftSizeInBytes(VolumeHeader * volumeheader) {
     uint8_t mftSize = volumeheader->mftSize;
     printf("MFT Size Value: %d\n", mftSize);
     if (mftSize > 255) {
-        cout << "MFTSize is over 255. This is invalid" << endl;
+        printf("MFTSize is over 255. This is invalid\n");
         throw;
     }
     else if (mftSize <= 128) {
@@ -106,7 +106,7 @@ int main() {
         printf("Volume system signature is: %s\n", volumeheader.VolumeSystemSignature);
     }
     else {
-        cout << "Failed to read volume header" << endl;
+        printf("Failed to read volume header\n");
         return -1;
     }
 
