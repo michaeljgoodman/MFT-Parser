@@ -34,7 +34,7 @@ struct VolumeHeader {
     uint8_t     bootloader[426];
     uint16_t    bootSignature;
 };
-#pragma pack(pop)
+
 
 
 //enum for entry flags
@@ -60,28 +60,28 @@ inline MFTEntryFlags operator|(MFTEntryFlags a, MFTEntryFlags b)
     return static_cast<MFTEntryFlags>(static_cast<int>(a) | static_cast<int>(b));
 }
 
-#pragma pack(push,1)
+
 struct MFTAttributeHeader {
     uint32_t attributeType;
-    uint32_t size; //or record length
-    uint8_t nonResidentFlag; //if this is 0, then the whole file is stored in the record. if it is 1, then the file data is stored elsewhere
-    uint8_t nameLength;
+    ULONG size; //or record length
+    UCHAR nonResidentFlag; //if this is 0, then the whole file is stored in the record. if it is 1, then the file data is stored elsewhere
+    UCHAR nameLength;
     uint16_t nameOffset;
     uint16_t attributeDataFlags;
     uint16_t attributeIdentifier;
 };
-#pragma pack(pop)
 
-#pragma pack(push,1)
+
+
 struct ResidentAttributeHeader : MFTAttributeHeader {
     uint32_t    attributeLength;
     uint16_t    attributeOffset;
     uint8_t     indexedFlag;
     uint8_t     ignore;
 };
-#pragma pack(pop)
 
-#pragma pack(push,1)
+
+
 struct NonResidentAttributeHeader : MFTAttributeHeader {
     uint64_t    firstCluster;
     uint64_t    lastCluster; //if data size is 0 this can be -1
@@ -92,16 +92,16 @@ struct NonResidentAttributeHeader : MFTAttributeHeader {
     uint64_t    attributeDataSize; //actual size in bytes
     uint64_t    streamDataSize;
 };
-#pragma pack(pop)
 
-#pragma pack(push,1)
+
+
 struct MFTFileReference {
     uint8_t MFTEntryIndex[6]; //supossedly the index value is only 32 bit in size, will verify this in hxd
     uint16_t sequenceNumber;
 };
-#pragma pack(pop)
 
-#pragma pack(push,1)
+
+
 struct MFTEntry {
     char signature[4];
     uint16_t fixupValuesOffset;
@@ -119,11 +119,6 @@ struct MFTEntry {
     uint32_t recordNumber; //index
 };
 #pragma pack(pop)
-
-
-
-
-
 
 
 BOOL ReadToBuffer(HANDLE drive, void *buffer, uint64_t starting_point, uint64_t count) {
@@ -226,17 +221,30 @@ int main() {
 
     printf("[-] Grabbing first attribute at offset of %i\n", mftFirstFile->attributesOffset);
     
-    MFTEntry *fileRecord = (MFTEntry *)mftFirstFile;
+    MFTEntry *fileRecord = mftFirstFile;
 
     
 
     MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFirstFile + fileRecord->attributesOffset);
+
+    printf("%d", attribute->nameOffset);
+
+    void * attributeBuffer;
+    memcpy(attributeBuffer, attribute, sizeof(MFTAttributeHeader));
+    HANDLE first_attribute_cache = CreateFileA(".\\attribute.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+    WriteFile(first_attribute_cache, attributeBuffer, sizeof(MFTAttributeHeader), 0, 0);
+
+
+    uint32_t attributeSize = attribute->size;
+    printf("[-] Reading attribute size as: %s\n", fileRecord + attribute->size);
+
     NonResidentAttributeHeader *dataAttribute = nullptr;
 
-    //uint16_t notcalledtest = fileRecord->attributesOffset;
     
-    //printf("[-] attributes offset value is: %d\n", notcalledtest);
-    //printf("Do we get to here?");
+    
+    
+
+
     //we can assume non resident is true because the entire MFT cannot fit inside a single MFT record
     //but if we didn't want to assume that, we could check that mftFirstFile->nonResidentFlag was 1
     
