@@ -34,6 +34,7 @@ struct VolumeHeader {
     uint8_t     bootloader[426];
     uint16_t    bootSignature;
 };
+static_assert(sizeof(VolumeHeader) == 512 );
 
 
 
@@ -55,6 +56,8 @@ enum MFTAttributeFlags {
     ATTRIBUTE_FLAG_SPARSE = 0x8000
 };
 
+
+
 inline MFTEntryFlags operator|(MFTEntryFlags a, MFTEntryFlags b)
 {
     return static_cast<MFTEntryFlags>(static_cast<int>(a) | static_cast<int>(b));
@@ -63,15 +66,13 @@ inline MFTEntryFlags operator|(MFTEntryFlags a, MFTEntryFlags b)
 
 struct MFTAttributeHeader {
     uint32_t attributeType;
-    ULONG size; //or record length
-    UCHAR nonResidentFlag; //if this is 0, then the whole file is stored in the record. if it is 1, then the file data is stored elsewhere
-    UCHAR nameLength;
+    uint32_t size; //or record length
+    uint8_t nonResidentFlag; //if this is 0, then the whole file is stored in the record. if it is 1, then the file data is stored elsewhere
+    uint8_t nameLength;
     uint16_t nameOffset;
     uint16_t attributeDataFlags;
     uint16_t attributeIdentifier;
 };
-
-
 
 struct ResidentAttributeHeader : MFTAttributeHeader {
     uint32_t    attributeLength;
@@ -107,17 +108,18 @@ struct MFTEntry {
     uint16_t fixupValuesOffset;
     uint16_t numberOfFixupValues;
     uint64_t metadataTransactionSequenceNumber;
-    uint16_t sequence; //sequence number
+    uint16_t sequenceNumber; //sequence number
     uint16_t linkCount;
     uint16_t attributesOffset; //Number of bytes between the start of the header and the first attribute header.
-    MFTEntryFlags entryFlags; //is in use, is directory
+    uint16_t entryFlags; //is in use, is directory
     uint32_t usedEntrySize;
     uint32_t totalEntrySize;
     MFTFileReference baseRecordFileReference;
     uint16_t nextAttributeID;
-    uint8_t ignore[8];
+    uint8_t ignore[2];
     uint32_t recordNumber; //index
 };
+static_assert(sizeof(MFTEntry) == 48 );
 #pragma pack(pop)
 
 
@@ -154,6 +156,9 @@ int mftSizeInBytes(VolumeHeader * volumeheader) {
     return 0;
 }
 
+
+
+
 int main() {
     HANDLE drive = CreateFileA("\\\\.\\C:", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL); //get handle to C drive
     if (drive) {
@@ -169,6 +174,9 @@ int main() {
     if (ReadToBuffer(drive, &volumeheader, 0, 512)) {
         printf("[+] Read volume header successfully\n");
         printf("[-] Volume system signature is: %s\n", volumeheader.VolumeSystemSignature);
+        HANDLE volumeheader_cache = CreateFileA(".\\volume_header.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+        WriteFile(volumeheader_cache, &volumeheader, sizeof(volumeheader), NULL, NULL);
+        volumeheader_cache = NULL;
     }
     else {
         printf("[!] Failed to read volume header\n");
@@ -176,9 +184,7 @@ int main() {
     }
 
     
-    HANDLE volumeheader_cache = CreateFileA(".\\volume_header.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
-    WriteFile(volumeheader_cache, &volumeheader, sizeof(volumeheader), NULL, NULL);
-
+    
     
     printf("[-] Bytes per sector: %d\n", volumeheader.bytesPerSector);
     printf("[-] Sectors per cluster: %d\n", volumeheader.sectorsPerCluster);
@@ -193,21 +199,27 @@ int main() {
     //the MFT file size is always 1024 bytes but we want to calculate it just for our understanding of NTFS
     printf("[-] Allocating %d bytes for our first MFT file entry\n", mft_file_entry_size);
     
-    MFTEntry *mftFirstFile = (MFTEntry*)malloc(mft_file_entry_size);
+
+    uint8_t mftFile[1024];
+    
     
     //multiply mft cluster number by bytes per cluster to get the file offset (in bytes)
     //volumeheader.mftClusterBlockNumber * bytesPerCluster
     //this is where we want to read from
     
-    if (ReadToBuffer(drive, mftFirstFile, volumeheader.mftClusterBlockNumber * bytesPerCluster, mft_file_entry_size)) { 
+    if (ReadToBuffer(drive, &mftFile, volumeheader.mftClusterBlockNumber * bytesPerCluster, mft_file_entry_size)) { 
         printf("[+] Read first MFT file entry successfully\n");
         HANDLE mft_first_file_cache = CreateFileA(".\\mft_first.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
-        WriteFile(mft_first_file_cache, mftFirstFile, mft_file_entry_size, NULL, NULL);
+        WriteFile(mft_first_file_cache, mftFile, mft_file_entry_size, NULL, NULL);
+        mft_first_file_cache = NULL;
     }
     else {
         printf("[!] Failed to read first MFT file entry\n");
         return -1;
     }
+
+    MFTEntry *mftFirstFile = (MFTEntry *) mftFile;
+
     if (strcmp(mftFirstFile->signature, "FILE")) {
         printf("[+] Signature of the first file entry is: %.4s\n", mftFirstFile->signature);
     }
@@ -216,8 +228,8 @@ int main() {
     }
     
     //check that we can parse flag enums
-    printf("[-] Checking if has MFT_RECORD_IN_USE flag: %d\n", (mftFirstFile->entryFlags & MFT_RECORD_IN_USE));
-    printf("[-] Checking if has MFT_RECORD_IS_DIRECTORY flag: %d\n", (mftFirstFile->entryFlags & MFT_RECORD_IS_DIRECTORY));
+    printf("[-] Checking if has MFT_RECORD_IN_USE flag: %d\n", (mftFirstFile->entryFlags & MFTEntryFlags::MFT_RECORD_IN_USE));
+    printf("[-] Checking if has MFT_RECORD_IS_DIRECTORY flag: %d\n", (mftFirstFile->entryFlags & MFTEntryFlags::MFT_RECORD_IS_DIRECTORY));
 
     printf("[-] Grabbing first attribute at offset of %i\n", mftFirstFile->attributesOffset);
     
@@ -225,14 +237,21 @@ int main() {
 
     
 
-    MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFirstFile + mftFirstFile->attributesOffset);
+    MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFile + mftFirstFile->attributesOffset);
 
-    printf("%d", attribute->nameOffset);
+    
 
-    void * attributeBuffer;
-    memcpy(attributeBuffer, attribute, sizeof(MFTAttributeHeader));
+    printf("%d\n", attribute->size);
+
+
+    void * attributeBuffer = malloc(sizeof(NonResidentAttributeHeader));
+    memcpy(attributeBuffer, attribute, sizeof(NonResidentAttributeHeader));
     HANDLE first_attribute_cache = CreateFileA(".\\attribute.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
-    WriteFile(first_attribute_cache, attributeBuffer, sizeof(MFTAttributeHeader), 0, 0);
+    WriteFile(first_attribute_cache, attributeBuffer, sizeof(NonResidentAttributeHeader), 0, 0);
+    free(attributeBuffer);
+
+
+
 
     printf("[-] Reading attribute size as: %s\n", mftFirstFile + attribute->size);
 
