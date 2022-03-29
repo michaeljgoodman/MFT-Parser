@@ -8,6 +8,13 @@
 
 using namespace std;
 
+#define FOREGROUND_WHITE FOREGROUND_RED | FOREGROUND_BLUE | FOREGROUND_GREEN
+
+void setColour(int colour) {
+    SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), colour);
+}
+
+
 #pragma pack(push,1)
 struct VolumeHeader {
     uint8_t     jump[3]; 
@@ -120,6 +127,14 @@ struct MFTEntry {
     uint32_t recordNumber; //index
 };
 static_assert(sizeof(MFTEntry) == 48 );
+
+struct RunHeader
+{
+    uint8_t offset : 4;
+    uint8_t length : 4;
+};
+
+
 #pragma pack(pop)
 
 
@@ -165,8 +180,11 @@ int main() {
         printf("Got handle to C drive\n");
     }
     else {
+        setColour(FOREGROUND_RED);
         printf("Could't get handle to C drive\n");
+        setColour(FOREGROUND_WHITE);
         return -1;
+        
     };
 
 
@@ -179,8 +197,11 @@ int main() {
         volumeheader_cache = NULL;
     }
     else {
+        setColour(FOREGROUND_RED);
         printf("[!] Failed to read volume header\n");
+        setColour(FOREGROUND_WHITE);
         return -1;
+        
     }
 
     
@@ -227,58 +248,44 @@ int main() {
         printf("[!] Something is wrong, reading first file entry signature as: %.4s\n", mftFirstFile->signature);
     }
     
+    
     //check that we can parse flag enums
     printf("[-] Checking if has MFT_RECORD_IN_USE flag: %d\n", (mftFirstFile->entryFlags & MFTEntryFlags::MFT_RECORD_IN_USE));
     printf("[-] Checking if has MFT_RECORD_IS_DIRECTORY flag: %d\n", (mftFirstFile->entryFlags & MFTEntryFlags::MFT_RECORD_IS_DIRECTORY));
-
     printf("[-] Grabbing first attribute at offset of %i\n", mftFirstFile->attributesOffset);
     
-    
-
-    
-
     MFTAttributeHeader *attribute = (MFTAttributeHeader *) (mftFile + mftFirstFile->attributesOffset);
 
-    
-
-    printf("%d\n", attribute->size);
-
-
-    void * attributeBuffer = malloc(sizeof(NonResidentAttributeHeader));
-    memcpy(attributeBuffer, attribute, sizeof(NonResidentAttributeHeader));
-    HANDLE first_attribute_cache = CreateFileA(".\\attribute.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
-    WriteFile(first_attribute_cache, attributeBuffer, sizeof(NonResidentAttributeHeader), 0, 0);
-    free(attributeBuffer);
-
-
-
-
-    printf("[-] Reading attribute size as: %s\n", mftFirstFile + attribute->size);
-
-    NonResidentAttributeHeader *dataAttribute = nullptr;
-
-    
-    
-    
 
 
     //we can assume non resident is true because the entire MFT cannot fit inside a single MFT record
     //but if we didn't want to assume that, we could check that mftFirstFile->nonResidentFlag was 1
-    
+    NonResidentAttributeHeader *dataAttribute = nullptr;
+
     while (true) {
-        printf("[-] Current attribute type is: %i\n", attribute->attributeType);
-        if ((int)&attribute->attributeType == 0x80) { //0x80 is $DATA
+        printf("[-] Current attribute type is: %d\n", attribute->attributeType);
+        printf("[-] Current attribute size as: %d\n", attribute->size);
+        if (attribute->attributeType == 0x80) { //0x80 is $DATA
             dataAttribute = (NonResidentAttributeHeader *) attribute;
-        } else if ((int)&attribute->attributeType == 0xFFFFFFFF) {
-            printf("[!] attribute type is %d. Something isn't right\n", attribute->attributeType);
+        } else if (attribute->attributeType == 0xFFFFFFFF) {
+            printf("[!] Have hit value 0xFFFFFFFF. Reached end of attributes\n\n", attribute->attributeType);
             break;
         }
+
     
+    HANDLE data_attribute_cache = CreateFileA(".\\data_attribute.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+    WriteFile(data_attribute_cache, dataAttribute, sizeof(NonResidentAttributeHeader), 0, 0);
+
     //advance by the length of current attribute, i.e. go to the next attribute
     printf("[-] Advancing %d bytes\n", attribute->size);
-    attribute = (MFTAttributeHeader *) ((uint8_t *) attribute + attribute->size);
+    attribute = (MFTAttributeHeader *) ((int)attribute + attribute->size);
     //after this loop, dataAttribute is now storing the nonResidentAttribute header of our $DATA attribute
     }
 
-    printf("[+] Located attribute of type %d\n", dataAttribute);
+    assert(dataAttribute);
+    printf("[+] Located $DATA attribute of the MFT file\n", dataAttribute->attributeType);
+
+    
+    RunHeader * dataRun = (RunHeader *) ((int)(dataAttribute) + dataAttribute->dataRunsOffset);
+    
 }
