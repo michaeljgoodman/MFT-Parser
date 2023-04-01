@@ -219,16 +219,18 @@ int main() {
     //we have to use malloc to dynamically create a buffer of the correct size
     //the MFT file size is always 1024 bytes but we want to calculate it just for our understanding of NTFS
     printf("[-] Allocating %d bytes for our first MFT file entry\n", mft_file_entry_size);
+    uint8_t* mftFile = static_cast<uint8_t*>(malloc(mft_file_entry_size));
     
 
-    uint8_t mftFile[1024];
+
+
     
     
     //multiply mft cluster number by bytes per cluster to get the file offset (in bytes)
     //volumeheader.mftClusterBlockNumber * bytesPerCluster
     //this is where we want to read from
     
-    if (ReadToBuffer(drive, &mftFile, volumeheader.mftClusterBlockNumber * bytesPerCluster, mft_file_entry_size)) { 
+    if (ReadToBuffer(drive, mftFile, volumeheader.mftClusterBlockNumber * bytesPerCluster, mft_file_entry_size)) { 
         printf("[+] Read first MFT file entry successfully\n");
         HANDLE mft_first_file_cache = CreateFileA(".\\mft_first.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
         WriteFile(mft_first_file_cache, mftFile, mft_file_entry_size, NULL, NULL);
@@ -283,7 +285,7 @@ int main() {
     }
 
     assert(dataAttribute);
-    printf("[+] Located $DATA attribute of the MFT file\n", dataAttribute->attributeType);
+    printf("[+] Located $DATA attribute of the MFT file, with type value 0x%01x\n", dataAttribute->attributeType);
 
     
     RunHeader * dataRun = (RunHeader *) ((int)(dataAttribute) + dataAttribute->dataRunsOffset);
