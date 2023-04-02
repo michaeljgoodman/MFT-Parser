@@ -5,6 +5,8 @@
 #include <iostream>
 #include <fstream>
 #include <cmath>
+#include <tuple>
+#include <vector>
 
 using namespace std;
 
@@ -14,6 +16,7 @@ void setColour(int colour) {
     SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), colour);
 }
 
+const int FAT_ENTRY_SIZE = 8; // Size of each FAT entry in bytes
 
 #pragma pack(push,1)
 struct VolumeHeader {
@@ -62,7 +65,6 @@ enum MFTAttributeFlags {
     ATTRIBUTE_FLAG_ENCRYPTED = 0x4000,
     ATTRIBUTE_FLAG_SPARSE = 0x8000
 };
-
 
 
 inline MFTEntryFlags operator|(MFTEntryFlags a, MFTEntryFlags b)
@@ -134,6 +136,19 @@ struct RunHeader
     uint8_t length : 4;
 };
 
+typedef struct MFT_SEGMENT_REFERENCE {
+  ULONG  SegmentNumberLowPart;
+  USHORT SegmentNumberHighPart;
+  USHORT SequenceNumber;
+} MFT_SEGMENT_REFERENCE, *PMFT_SEGMENT_REFERENCE;
+
+typedef struct FILE_NAME : ResidentAttributeHeader {
+  MFT_SEGMENT_REFERENCE ParentDirectory;
+  UCHAR          Reserved[0x38];
+  UCHAR          FileNameLength;
+  UCHAR          Flags;
+  WCHAR          FileName[1];
+} FILE_NAME, *PFILE_NAME;
 
 #pragma pack(pop)
 
@@ -147,6 +162,7 @@ BOOL ReadToBuffer(HANDLE drive, void *buffer, uint64_t starting_point, uint64_t 
 
     assert(bytesAccessed == count); //will throw error if it reads back less bytes than requested
 }
+
 
 int mftSizeInBytes(VolumeHeader * volumeheader) {
     uint8_t mftSize = volumeheader->mftSize;
@@ -171,8 +187,98 @@ int mftSizeInBytes(VolumeHeader * volumeheader) {
     return 0;
 }
 
+void parseDataRuns(char* buffer, int size)
+{
+    //vector<tuple<long long, long long>> runs;
+    int i = 0;
+    int dataRunOffset = 0;
+    while (i < size)
+    {
+        char lengthByte = buffer[i]; //take 1st byte as the length byte
 
+        int length = lengthByte & 0x0F; // Extract lower 4 bits, this is the length
+        printf("Length: %d\n", length);
 
+        int offset = lengthByte >> 4; // Extract upper 4 bits, this is the offset
+        printf("Offset is: %d\n", offset);
+
+        i++; // advance 1 byte
+
+        if (length == 0) { //if the length was 0, break out
+            printf("Length is 0 so breaking\n");
+            break;
+        }
+
+        if (offset == 0) // Encoded using variable-length integer
+        {
+            offset = 1;
+            while (buffer[i] & 0x80)
+            {
+                offset++;
+                i++;
+            }
+        }
+
+        // Read the data run length using variable-length integer encoding
+        long long dataRunClusterCount = 0;
+        for (int j = 0; j < length; j++)
+        {
+            dataRunClusterCount |= (buffer[i] & 0xFFLL) << (8 * j);
+            i++;
+        }
+
+        // Calculate the LCN and VCN of the data run
+        long long lcn = dataRunOffset + offset;
+        long long vcn = 0;
+        if (dataRunClusterCount > 0)
+        {
+            vcn = lcn - dataRunOffset;
+            dataRunOffset = lcn + dataRunClusterCount;
+        }
+
+        // Read the data run first file cluster value using variable-length integer encoding
+        long long firstFileCluster = 0;
+        for (int j = 0; j < offset; j++)
+        {
+            firstFileCluster |= (buffer[i] & 0xFFLL) << (8 * j);
+            i++;
+        }
+
+        //runs.emplace_back(firstFileCluster, dataRunClusterCount);
+        cout << "Data run: LCN = " << lcn << ", VCN = " << vcn << ", Cluster count = " << dataRunClusterCount << endl;
+        cout << "First file cluster = " << firstFileCluster << endl;
+    }
+    printf("[-] Finished parsing data runs\n");
+}
+
+VOID writeFileFromRuns(vector<tuple<long long, long long>> runs, LPSTR filename, HANDLE drive, VolumeHeader* volumeheader) {
+
+    long long bytesPerCluster = volumeheader->bytesPerSector * volumeheader->sectorsPerCluster;
+    printf("[-] Bytes per cluster: %d\n", bytesPerCluster);
+    printf("[-] Writing file from runs\n");
+    
+    HANDLE file = CreateFileA(filename, GENERIC_WRITE | GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+    if (file) {
+        printf("[-] Got handle to file\n");
+    }
+    else {
+        printf("[-] Could not get handle to file\n");
+        return;
+    }
+    for (auto run : runs) {
+        long long firstFileCluster = get<0>(run);
+        long long clusterCount = get<1>(run);
+        printf("[-] First file cluster: %d\n", firstFileCluster);
+        printf("[-] Cluster count: %d\n", clusterCount);
+        for (int i = 0; i < clusterCount; i++) {
+            char* buffer = (char*)malloc(bytesPerCluster);
+            ReadToBuffer(drive, buffer, LONG(firstFileCluster + (i * bytesPerCluster)), bytesPerCluster);
+            DWORD bytesWritten;
+            WriteFile(file, buffer, bytesPerCluster, &bytesWritten, NULL);
+            free(buffer);
+        }
+    }
+}
 
 int main() {
     HANDLE drive = CreateFileA("\\\\.\\C:", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL); //get handle to C drive
@@ -187,25 +293,24 @@ int main() {
         
     };
 
-
     VolumeHeader volumeheader;
     if (ReadToBuffer(drive, &volumeheader, 0, 512)) {
         printf("[+] Read volume header successfully\n");
         printf("[-] Volume system signature is: %s\n", volumeheader.VolumeSystemSignature);
-        HANDLE volumeheader_cache = CreateFileA(".\\volume_header.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+        /* HANDLE volumeheader_cache = CreateFileA(".\\volume_header.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
         WriteFile(volumeheader_cache, &volumeheader, sizeof(volumeheader), NULL, NULL);
-        volumeheader_cache = NULL;
+        volumeheader_cache = NULL; */
     }
     else {
         setColour(FOREGROUND_RED);
         printf("[!] Failed to read volume header\n");
+        //print last error
+        printf("[-] Last error: %d\n", GetLastError());
         setColour(FOREGROUND_WHITE);
         return -1;
         
     }
 
-    
-    
     
     printf("[-] Bytes per sector: %d\n", volumeheader.bytesPerSector);
     printf("[-] Sectors per cluster: %d\n", volumeheader.sectorsPerCluster);
@@ -220,10 +325,6 @@ int main() {
     //the MFT file size is always 1024 bytes but we want to calculate it just for our understanding of NTFS
     printf("[-] Allocating %d bytes for our first MFT file entry\n", mft_file_entry_size);
     uint8_t* mftFile = static_cast<uint8_t*>(malloc(mft_file_entry_size));
-    
-
-
-
     
     
     //multiply mft cluster number by bytes per cluster to get the file offset (in bytes)
@@ -269,14 +370,25 @@ int main() {
         printf("[-] Current attribute size as: %d\n", attribute->size);
         if (attribute->attributeType == 0x80) { //0x80 is $DATA
             dataAttribute = (NonResidentAttributeHeader *) attribute;
-        } else if (attribute->attributeType == 0xFFFFFFFF) {
+        } 
+        else if (attribute->attributeType == 0x30) {
+            printf("[-] Found attribute type 0x30, which is $FILE_NAME\n");
+            FILE_NAME *filenameAttribute = (FILE_NAME *) attribute;
+            // print file name length
+            printf("[-] File name length is: %d\n", filenameAttribute->FileNameLength);
+
+            // create string starting at filename offset with a length of FileNameLength
+            std::wstring filename = std::wstring((WCHAR *)filenameAttribute->FileName, filenameAttribute->FileNameLength);
+            wprintf(L"[-] File name is: %s\n", filename.c_str());
+        }
+        else if (attribute->attributeType == 0xFFFFFFFF) {
             printf("[!] Have hit value 0xFFFFFFFF. Reached end of attributes\n\n", attribute->attributeType);
             break;
         }
 
     
-    HANDLE data_attribute_cache = CreateFileA(".\\data_attribute.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
-    WriteFile(data_attribute_cache, dataAttribute, sizeof(NonResidentAttributeHeader), 0, 0);
+    /* HANDLE data_attribute_cache = CreateFileA(".\\data_attribute.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
+    WriteFile(data_attribute_cache, dataAttribute, sizeof(NonResidentAttributeHeader), 0, 0); */
 
     //advance by the length of current attribute, i.e. go to the next attribute
     printf("[-] Advancing %d bytes\n", attribute->size);
@@ -286,8 +398,12 @@ int main() {
 
     assert(dataAttribute);
     printf("[+] Located $DATA attribute of the MFT file, with type value 0x%01x\n", dataAttribute->attributeType);
+    printf("[-] Data attribute size is: 0x%01x\n", dataAttribute->size);
+    printf("[-] Data attribute offset is: 0x%01x\n", dataAttribute->dataRunsOffset);
 
     
-    RunHeader * dataRun = (RunHeader *) ((int)(dataAttribute) + dataAttribute->dataRunsOffset);
-    
+    parseDataRuns((char *)dataAttribute + (int)dataAttribute->dataRunsOffset, mft_file_entry_size);
+
+    //writeFileFromRuns(runs, ".\\mft.bin", drive, &volumeheader);
+
 }
