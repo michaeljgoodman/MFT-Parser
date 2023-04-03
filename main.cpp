@@ -230,7 +230,7 @@ vector<tuple<long long, int>> parseDataRuns(char* buffer, int size)
         runs.push_back(make_tuple(clusterNumber, length));
 
         printf("[-] Length field bytes: %d, Offset field bytes: %d\n", dataRun->lengthFieldBytes,dataRun->offsetFieldBytes);
-        printf("[-] Length: %d, Offset: %d\n", length, offset);
+        printf("[-] Length: %d, Offset: %d\n", length, clusterNumber);
         dataRun = (RunHeader *) ((uint8_t *) dataRun + 1 + dataRun->lengthFieldBytes + dataRun->offsetFieldBytes);
     }
     return runs;
@@ -266,7 +266,7 @@ VOID writeFileFromRuns(vector<tuple<long long, int>> runs, LPSTR filename, HANDL
 }
 
 int main() {
-    HANDLE drive = CreateFileA("\\\\.\\C:", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL); //get handle to C drive
+    HANDLE drive = CreateFileA("\\\\.\\C:", FILE_GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, 0, NULL); //get handle to C drive
     if (drive) {
         printf("Got handle to C drive\n");
     }
@@ -278,10 +278,10 @@ int main() {
         
     };
 
-    VolumeHeader volumeheader;
-    if (ReadToBuffer(drive, &volumeheader, 0, 512)) {
+    VolumeHeader * volumeheader = (VolumeHeader*)malloc(512);
+    if (ReadFile(drive, volumeheader, (DWORD)512, NULL, NULL)) {
         printf("[+] Read volume header successfully\n");
-        printf("[-] Volume system signature is: %s\n", volumeheader.VolumeSystemSignature);
+        printf("[-] Volume system signature is: %s\n", volumeheader->VolumeSystemSignature);
         /* HANDLE volumeheader_cache = CreateFileA(".\\volume_header.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
         WriteFile(volumeheader_cache, &volumeheader, sizeof(volumeheader), NULL, NULL);
         volumeheader_cache = NULL; */
@@ -297,14 +297,14 @@ int main() {
     }
 
     
-    printf("[-] Bytes per sector: %d\n", volumeheader.bytesPerSector);
-    printf("[-] Sectors per cluster: %d\n", volumeheader.sectorsPerCluster);
+    printf("[-] Bytes per sector: %d\n", volumeheader->bytesPerSector);
+    printf("[-] Sectors per cluster: %d\n", volumeheader->sectorsPerCluster);
 
-    uint64_t bytesPerCluster = volumeheader.bytesPerSector * volumeheader.sectorsPerCluster;
+    uint64_t bytesPerCluster = volumeheader->bytesPerSector * volumeheader->sectorsPerCluster;
     printf("[-] Calculated %d bytes per cluster\n", bytesPerCluster);
 
     //size of MFT file entry can 
-    int mft_file_entry_size = mftSizeInBytes(&volumeheader);
+    int mft_file_entry_size = mftSizeInBytes(volumeheader);
     
     //we have to use malloc to dynamically create a buffer of the correct size
     //the MFT file size is always 1024 bytes but we want to calculate it just for our understanding of NTFS
@@ -316,7 +316,7 @@ int main() {
     //volumeheader.mftClusterBlockNumber * bytesPerCluster
     //this is where we want to read from
     
-    if (ReadToBuffer(drive, mftFile, volumeheader.mftClusterBlockNumber * bytesPerCluster, mft_file_entry_size)) { 
+    if (ReadToBuffer(drive, mftFile, volumeheader->mftClusterBlockNumber * bytesPerCluster, mft_file_entry_size)) { 
         printf("[+] Read first MFT file entry successfully\n");
         HANDLE mft_first_file_cache = CreateFileA(".\\mft_first.bin", GENERIC_WRITE | GENERIC_READ , FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, CREATE_ALWAYS, 0, NULL);
         WriteFile(mft_first_file_cache, mftFile, mft_file_entry_size, NULL, NULL);
@@ -389,6 +389,10 @@ int main() {
     
     vector<tuple<long long, int>>runs = parseDataRuns((char *)dataAttribute + (int)dataAttribute->dataRunsOffset, mft_file_entry_size);
     
-    writeFileFromRuns(runs, ".\\mft.bin", drive, &volumeheader);
+    writeFileFromRuns(runs, ".\\mft.bin", drive, volumeheader);
+
+    //free handle
+    CloseHandle(drive);
+    return 0;
 
 }
