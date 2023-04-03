@@ -130,10 +130,9 @@ struct MFTEntry {
 };
 static_assert(sizeof(MFTEntry) == 48 );
 
-struct RunHeader
-{
-    uint8_t offset : 4;
-    uint8_t length : 4;
+struct RunHeader {
+    uint8_t     lengthFieldBytes : 4;
+    uint8_t     offsetFieldBytes : 4;
 };
 
 typedef struct MFT_SEGMENT_REFERENCE {
@@ -163,6 +162,18 @@ BOOL ReadToBuffer(HANDLE drive, void *buffer, uint64_t starting_point, uint64_t 
     assert(bytesAccessed == count); //will throw error if it reads back less bytes than requested
 }
 
+int readVariableLengthInt(uint8_t * data, uint8_t * offset) {
+    int value = 0;
+    int shift = 0;
+    int i = 0;
+    do {
+        value += (data[*offset + i] & 0x7f) << shift;
+        shift += 7;
+        i++;
+    } while (data[*offset + i - 1] & 0x80);
+    *offset += i;
+    return value;
+}
 
 int mftSizeInBytes(VolumeHeader * volumeheader) {
     uint8_t mftSize = volumeheader->mftSize;
@@ -190,69 +201,38 @@ int mftSizeInBytes(VolumeHeader * volumeheader) {
 vector<tuple<long long, int>> parseDataRuns(char* buffer, int size)
 {
     vector<tuple<long long, int>> runs;
-    int i = 0;
-    int dataRunOffset = 0;
-    while (i < size)
-    {
-        char lengthByte = buffer[i]; //take 1st byte as the length byte
 
-        int length = lengthByte & 0x0F; // Extract lower 4 bits, this is the length
-        printf("Length: %d\n", length);
+    RunHeader *dataRun = (RunHeader *)buffer;
+    uint64_t clusterNumber = 0;
 
-        int offset = lengthByte >> 4; // Extract upper 4 bits, this is the offset
-        printf("Offset is: %d\n", offset);
+    while (true) {
+        uint64_t length = 0;
+        uint64_t offset = 0;
 
-        i++; // advance 1 byte
+        for (int i = 0; i < dataRun->lengthFieldBytes; i++) {
+            length |= (uint64_t) (((uint8_t *) dataRun)[1 + i]) << (i * 8);
+        }
 
-        if (length == 0) { //if the length was 0, break out
-            printf("Length is 0 so breaking\n");
+        if (length == 0) {
             break;
         }
-
-        if (offset == 0) // Encoded using variable-length integer
-        {
-            printf("Offset is 0 so using variable length integer\n");
-            offset = 1;
-            while (buffer[i] & 0x80)
-            {
-                offset++;
-                i++;
-            }
-        }
-
-        // Read the data run length using variable-length integer encoding
-        int dataRunClusterCount = 0;
-        for (int j = 0; j < length; j++)
-        {
-            dataRunClusterCount |= (buffer[i] & 0xFFLL) << (8 * j);
-            i++;
-        }
-
-        // Calculate the LCN and VCN of the data run
-        int lcn = dataRunOffset + offset;
-        int vcn = 0;
-        if (dataRunClusterCount > 0)
-        {
-            vcn = lcn - dataRunOffset;
-            dataRunOffset = lcn + dataRunClusterCount;
-        }
-
-        // Read the data run first file cluster value using variable-length integer encoding
-        signed long long firstFileCluster = 0;
-        for (int j = 0; j < offset; j++)
-        {
-            firstFileCluster |= ((signed long long)buffer[i] & 0xFF) << (8 * j);
-            i++;
-        }
-
         
+        for (int i = 0; i < dataRun->offsetFieldBytes; i++) {
+            offset |= (uint64_t) (((uint8_t *) dataRun)[1 + dataRun->lengthFieldBytes + i]) << (i * 8);
+        }
 
-        runs.emplace_back(firstFileCluster, dataRunClusterCount);
-        printf("Data run cluster count: %i\n", dataRunClusterCount);
-        printf("First file cluster: %lld\n", firstFileCluster);
-        
+        if (offset & 0x8000000000000000) {
+            offset |= 0xFFFFFFFF00000000;
+        }
+
+        clusterNumber += offset;
+
+        runs.push_back(make_tuple(clusterNumber, length));
+
+        printf("[-] Length field bytes: %d, Offset field bytes: %d\n", dataRun->lengthFieldBytes,dataRun->offsetFieldBytes);
+        printf("[-] Length: %d, Offset: %d\n", length, offset);
+        dataRun = (RunHeader *) ((uint8_t *) dataRun + 1 + dataRun->lengthFieldBytes + dataRun->offsetFieldBytes);
     }
-    printf("[-] Finished parsing data runs\n");
     return runs;
 }
 
