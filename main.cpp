@@ -187,9 +187,9 @@ int mftSizeInBytes(VolumeHeader * volumeheader) {
     return 0;
 }
 
-void parseDataRuns(char* buffer, int size)
+vector<tuple<long long, int>> parseDataRuns(char* buffer, int size)
 {
-    //vector<tuple<long long, long long>> runs;
+    vector<tuple<long long, int>> runs;
     int i = 0;
     int dataRunOffset = 0;
     while (i < size)
@@ -211,6 +211,7 @@ void parseDataRuns(char* buffer, int size)
 
         if (offset == 0) // Encoded using variable-length integer
         {
+            printf("Offset is 0 so using variable length integer\n");
             offset = 1;
             while (buffer[i] & 0x80)
             {
@@ -220,7 +221,7 @@ void parseDataRuns(char* buffer, int size)
         }
 
         // Read the data run length using variable-length integer encoding
-        long long dataRunClusterCount = 0;
+        int dataRunClusterCount = 0;
         for (int j = 0; j < length; j++)
         {
             dataRunClusterCount |= (buffer[i] & 0xFFLL) << (8 * j);
@@ -228,8 +229,8 @@ void parseDataRuns(char* buffer, int size)
         }
 
         // Calculate the LCN and VCN of the data run
-        long long lcn = dataRunOffset + offset;
-        long long vcn = 0;
+        int lcn = dataRunOffset + offset;
+        int vcn = 0;
         if (dataRunClusterCount > 0)
         {
             vcn = lcn - dataRunOffset;
@@ -237,21 +238,25 @@ void parseDataRuns(char* buffer, int size)
         }
 
         // Read the data run first file cluster value using variable-length integer encoding
-        long long firstFileCluster = 0;
+        signed long long firstFileCluster = 0;
         for (int j = 0; j < offset; j++)
         {
-            firstFileCluster |= (buffer[i] & 0xFFLL) << (8 * j);
+            firstFileCluster |= ((signed long long)buffer[i] & 0xFF) << (8 * j);
             i++;
         }
 
-        //runs.emplace_back(firstFileCluster, dataRunClusterCount);
-        cout << "Data run: LCN = " << lcn << ", VCN = " << vcn << ", Cluster count = " << dataRunClusterCount << endl;
-        cout << "First file cluster = " << firstFileCluster << endl;
+        
+
+        runs.emplace_back(firstFileCluster, dataRunClusterCount);
+        printf("Data run cluster count: %i\n", dataRunClusterCount);
+        printf("First file cluster: %lld\n", firstFileCluster);
+        
     }
     printf("[-] Finished parsing data runs\n");
+    return runs;
 }
 
-VOID writeFileFromRuns(vector<tuple<long long, long long>> runs, LPSTR filename, HANDLE drive, VolumeHeader* volumeheader) {
+VOID writeFileFromRuns(vector<tuple<long long, int>> runs, LPSTR filename, HANDLE drive, VolumeHeader* volumeheader) {
 
     long long bytesPerCluster = volumeheader->bytesPerSector * volumeheader->sectorsPerCluster;
     printf("[-] Bytes per cluster: %d\n", bytesPerCluster);
@@ -267,12 +272,12 @@ VOID writeFileFromRuns(vector<tuple<long long, long long>> runs, LPSTR filename,
     }
     for (auto run : runs) {
         long long firstFileCluster = get<0>(run);
-        long long clusterCount = get<1>(run);
+        int clusterCount = get<1>(run);
         printf("[-] First file cluster: %d\n", firstFileCluster);
         printf("[-] Cluster count: %d\n", clusterCount);
         for (int i = 0; i < clusterCount; i++) {
             char* buffer = (char*)malloc(bytesPerCluster);
-            ReadToBuffer(drive, buffer, LONG(firstFileCluster + (i * bytesPerCluster)), bytesPerCluster);
+            ReadToBuffer(drive, buffer, (firstFileCluster + i) * bytesPerCluster, bytesPerCluster);
             DWORD bytesWritten;
             WriteFile(file, buffer, bytesPerCluster, &bytesWritten, NULL);
             free(buffer);
@@ -402,8 +407,8 @@ int main() {
     printf("[-] Data attribute offset is: 0x%01x\n", dataAttribute->dataRunsOffset);
 
     
-    parseDataRuns((char *)dataAttribute + (int)dataAttribute->dataRunsOffset, mft_file_entry_size);
-
-    //writeFileFromRuns(runs, ".\\mft.bin", drive, &volumeheader);
+    vector<tuple<long long, int>>runs = parseDataRuns((char *)dataAttribute + (int)dataAttribute->dataRunsOffset, mft_file_entry_size);
+    
+    writeFileFromRuns(runs, ".\\mft.bin", drive, &volumeheader);
 
 }
